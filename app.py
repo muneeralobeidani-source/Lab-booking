@@ -5,7 +5,7 @@ from datetime import date
 
 # --- 1. إعداد قاعدة البيانات ---
 def init_db():
-    conn = sqlite3.connect('lab_booking_system_final_v6.db')
+    conn = sqlite3.connect('lab_booking_v7.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bookings (
@@ -26,12 +26,12 @@ init_db()
 st.set_page_config(page_title="حجز المختبر - أ. منير", layout="centered")
 st.title("🔬 نظام حجز المختبر - أ. منير")
 
-# --- 2. القائمة الجانبية (Sidebar) ---
+# --- 2. القائمة الجانبية ---
 st.sidebar.title("🔐 بوابة الوصول")
-user_role = st.sidebar.radio("اختر نوع المستخدم:", ["واجهة المعلمين (حجز وإدارة)", "فني المختبر (إدارة عليا)"])
+user_role = st.sidebar.radio("اختر نوع المستخدم:", ["واجهة المعلمين", "فني المختبر (أ. منير)"])
 
-# --- 3. واجهة المعلمين (حجز + تعديل + حذف) ---
-if user_role == "واجهة المعلمين (حجز وإدارة)":
+# --- 3. واجهة المعلمين ---
+if user_role == "واجهة المعلمين":
     st.subheader("📝 تسجيل حجز جديد")
     with st.form("booking_form", clear_on_submit=True):
         t_name = st.text_input("اسم المعلم")
@@ -42,60 +42,79 @@ if user_role == "واجهة المعلمين (حجز وإدارة)":
         t_purpose = st.radio("الغرض", ["تجربة عملية", "عرض تعليمي"])
         submit_btn = st.form_submit_button("تأكيد الحجز")
 
-    if submit_btn and t_name:
-        conn = sqlite3.connect('lab_booking_system_final_v6.db')
-        cursor = conn.cursor()
-        # كود منع التعارض
-        cursor.execute('SELECT teacher_name FROM bookings WHERE period = ? AND booking_date = ?', (t_period, str(t_date)))
-        existing = cursor.fetchone()
-        
-        if existing:
-            st.error(f"🚨 تعارض! المختبر محجوز مسبقاً في الحصة {t_period} للأستاذ/ة: {existing[0]}")
+    if submit_btn:
+        if t_name:
+            # تحويل التاريخ لنص ثابت لضمان دقة المقارنة
+            d_str = t_date.strftime('%Y-%m-%d')
+            conn = sqlite3.connect('lab_booking_v7.db')
+            cursor = conn.cursor()
+            
+            # فحص التعارض بدقة
+            cursor.execute('SELECT teacher_name FROM bookings WHERE period = ? AND booking_date = ?', (t_period, d_str))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # رسالة التعارض (ستبقى ظاهرة لأننا حذفنا st.rerun)
+                st.error(f"🚨 عذراً أستاذ {t_name}.. المختبر محجوز مسبقاً في الحصة ({t_period}) بتاريخ ({d_str}) من قبل الأستاذ/ة: {existing[0]}")
+            else:
+                cursor.execute('INSERT INTO bookings (teacher_name, subject, grade, period, booking_date, purpose) VALUES (?,?,?,?,?,?)',
+                               (t_name, t_subject, t_grade, t_period, d_str, t_purpose))
+                conn.commit()
+                st.success(f"✅ تم تأكيد حجزك بنجاح أستاذ {t_name}")
+            conn.close()
         else:
-            cursor.execute('INSERT INTO bookings (teacher_name, subject, grade, period, booking_date, purpose) VALUES (?,?,?,?,?,?)',
-                           (t_name, t_subject, t_grade, t_period, str(t_date), t_purpose))
-            conn.commit()
-            st.success("✅ تم تأكيد الحجز بنجاح")
-        conn.close()
-        st.rerun()
+            st.warning("⚠️ يرجى كتابة اسم المعلم")
 
     st.markdown("---")
-    st.subheader("📋 جدول الحجوزات (متاح للمعلمين للتعديل والحذف)")
-    conn = sqlite3.connect('lab_booking_system_final_v6.db')
-    df = pd.read_sql_query("SELECT * FROM bookings", conn)
+    st.subheader("📋 جدول الحجوزات الحالي")
+    
+    conn = sqlite3.connect('lab_booking_v7.db')
+    df = pd.read_sql_query("SELECT id, teacher_name, subject, grade, period, booking_date, purpose FROM bookings", conn)
     conn.close()
 
-    if not df.empty:
-        # المعلم يمكنه التعديل والحذف هنا
-        edited_df = st.data_editor(df, column_config={"id": None}, num_rows="dynamic", use_container_width=True, key="teacher_view")
-        if st.button("💾 حفظ التغييرات (للمعلمين)"):
-            conn = sqlite3.connect('lab_booking_system_final_v6.db')
-            edited_df.to_sql('bookings', conn, if_exists='replace', index=False)
+    # تعريب أسماء الأعمدة في الجدول
+    df_ar = df.rename(columns={
+        'teacher_name': 'اسم المعلم',
+        'subject': 'المادة',
+        'grade': 'الصف',
+        'period': 'الحصة',
+        'booking_date': 'التاريخ',
+        'purpose': 'الغرض'
+    })
+
+    if not df_ar.empty:
+        st.write("💡 يمكنك التعديل أو الحذف مباشرة من الجدول أدناه ثم الضغط على حفظ:")
+        # جدول تفاعلي مع إخفاء العمود التقني ID
+        edited_df = st.data_editor(df_ar, column_config={"id": None}, num_rows="dynamic", use_container_width=True)
+        
+        if st.button("💾 حفظ التغييرات في الجدول"):
+            conn = sqlite3.connect('lab_booking_v7.db')
+            # إعادة تحويل الأسماء للإنجليزية قبل الحفظ في قاعدة البيانات
+            final_df = edited_df.rename(columns={
+                'اسم المعلم': 'teacher_name',
+                'المادة': 'subject',
+                'الصف': 'grade',
+                'الحصة': 'period',
+                'التاريخ': 'booking_date',
+                'الغرض': 'purpose'
+            })
+            final_df.to_sql('bookings', conn, if_exists='replace', index=False)
             conn.close()
-            st.success("✅ تم تحديث الجدول")
+            st.success("✅ تم تحديث الجدول بنجاح")
             st.rerun()
     else:
-        st.info("لا توجد حجوزات حالياً.")
+        st.info("لا توجد حجوزات مسجلة حالياً.")
 
-# --- 4. واجهة فني المختبر (أ. منير) - الإدارة العليا ---
+# --- 4. واجهة فني المختبر ---
 else:
-    st.subheader("🛠️ لوحة الإدارة العليا - أ. منير")
-    password = st.sidebar.text_input("أدخل كلمة المرور:", type="password")
-    
-    if password == "1234":
-        st.success("مرحباً أ. منير. هذه اللوحة لمراقبة وإدارة جميع العمليات.")
-        conn = sqlite3.connect('lab_booking_system_final_v6.db')
+    st.subheader("🛠️ الإدارة العليا - أ. منير")
+    pwd = st.sidebar.text_input("كلمة المرور:", type="password")
+    if pwd == "1234":
+        st.success("مرحباً أ. منير، يمكنك مراقبة كافة الحجوزات من هنا.")
+        # عرض كامل للبيانات للفني
+        conn = sqlite3.connect('lab_booking_v7.db')
         df_admin = pd.read_sql_query("SELECT * FROM bookings", conn)
-        
-        if not df_admin.empty:
-            # الفني يرى عمود الـ ID أيضاً للرقابة الدقيقة
-            admin_edit = st.data_editor(df_admin, num_rows="dynamic", use_container_width=True, key="admin_view")
-            if st.button("💾 حفظ التعديلات الإدارية"):
-                admin_edit.to_sql('bookings', conn, if_exists='replace', index=False)
-                conn.close()
-                st.success("✅ تم التحديث الإداري بنجاح")
-                st.rerun()
-        else:
-            st.info("المستودع فارغ حالياً.")
+        st.dataframe(df_admin, use_container_width=True)
+        conn.close()
     else:
-        st.warning("هذه المنطقة مخصصة لفني المختبر فقط.")
+        st.warning("الوصول مقتصر على فني المختبر.")
