@@ -5,7 +5,7 @@ from datetime import date
 
 # --- 1. إعداد قاعدة البيانات ---
 def init_db():
-    conn = sqlite3.connect('lab_booking_system_v3.db')
+    conn = sqlite3.connect('lab_booking_v4_final.db') # تغيير اسم القاعدة لضمان التحديث
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bookings (
@@ -23,11 +23,10 @@ def init_db():
 
 init_db()
 
-# إعدادات الصفحة
 st.set_page_config(page_title="حجز المختبر - أ. منير", layout="centered")
 st.title("🔬 نظام حجز المختبر - أ. منير")
 
-# --- 2. واجهة المعلم (إضافة حجز مع نظام منع التعارض) ---
+# --- 2. واجهة المعلم ---
 st.subheader("📝 تسجيل حجز جديد")
 with st.form("booking_form", clear_on_submit=True):
     t_name = st.text_input("اسم المعلم")
@@ -41,51 +40,53 @@ with st.form("booking_form", clear_on_submit=True):
 
 if submit_btn:
     if t_name:
-        conn = sqlite3.connect('lab_booking_system_v3.db')
+        # تحويل التاريخ لنص واضح للمقارنة
+        selected_date = str(t_date)
+        
+        conn = sqlite3.connect('lab_booking_v4_final.db')
         cursor = conn.cursor()
         
-        # هـنـا كود فحص التعارض (نفس التاريخ والحصة)
-        cursor.execute('SELECT teacher_name FROM bookings WHERE period=? AND booking_date=?', (t_period, str(t_date)))
+        # البحث عن أي حجز في نفس الحصة والتاريخ (تنظيف البيانات لضمان المطابقة)
+        cursor.execute('SELECT teacher_name FROM bookings WHERE period = ? AND booking_date = ?', (t_period, selected_date))
         existing_booking = cursor.fetchone()
         
         if existing_booking:
-            # رسالة التنبيه في حالة التعارض
-            st.error(f"⚠️ تعارض في الحجز! المختبر محجوز مسبقاً في الحصة {t_period} من قبل الأستاذ/ة: ({existing_booking[0]}). يرجى اختيار حصة أو تاريخ آخر.")
+            # رسالة تحذير قوية جداً تظهر في حالة التعارض
+            st.warning(f"🚨 تنبيه تعارض: المختبر محجوز مسبقاً في الحصة ({t_period}) بتاريخ ({selected_date}) من قبل الأستاذ/ة: {existing_booking[0]}")
+            st.error("❌ لم يتم الحجز. يرجى اختيار موعد آخر.")
         else:
-            # إذا لم يوجد تعارض، يتم الحجز
             cursor.execute('''INSERT INTO bookings (teacher_name, subject, grade, period, booking_date, purpose) 
-                              VALUES (?, ?, ?, ?, ?, ?)''', (t_name, t_subject, t_grade, t_period, str(t_date), t_purpose))
+                              VALUES (?, ?, ?, ?, ?, ?)''', (t_name, t_subject, t_grade, t_period, selected_date, t_purpose))
             conn.commit()
+            st.balloons() # بالونات احتفال عند النجاح
             st.success(f"✅ تم تأكيد حجزك بنجاح أستاذ {t_name}")
         conn.close()
-        st.rerun()
+        # ملاحظة: تم إزالة st.rerun() هنا للسماح للرسالة بالبقاء ظاهرة
     else:
-        st.warning("⚠️ يرجى إدخال اسم المعلم أولاً")
+        st.error("⚠️ يرجى كتابة اسمك أولاً")
 
 st.markdown("---")
 
-# --- 3. واجهة الإدارة والتعديل والحذف ---
+# --- 3. عرض الجدول والإدارة ---
 st.subheader("📋 جدول الحجوزات (تعديل وحذف)")
-conn = sqlite3.connect('lab_booking_system_v3.db')
+conn = sqlite3.connect('lab_booking_v4_final.db')
 df = pd.read_sql_query("SELECT * FROM bookings", conn)
 conn.close()
 
 if not df.empty:
-    st.write("💡 يمكنك التعديل مباشرة في الجدول أدناه، أو تحديد صف وحذفه ثم الضغط على حفظ.")
-    
     edited_df = st.data_editor(
         df,
-        column_config={"id": None}, # إخفاء عمود ID
-        num_rows="dynamic", # يتيح حذف الصفوف
+        column_config={"id": None},
+        num_rows="dynamic",
         use_container_width=True,
         key="main_editor"
     )
 
-    if st.button("💾 حفظ التعديلات النهائية (تعديل/حذف)"):
-        conn = sqlite3.connect('lab_booking_system_v3.db')
+    if st.button("💾 حفظ التعديلات"):
+        conn = sqlite3.connect('lab_booking_v4_final.db')
         edited_df.to_sql('bookings', conn, if_exists='replace', index=False)
         conn.close()
-        st.success("✅ تم تحديث البيانات بنجاح")
+        st.success("✅ تم التحديث")
         st.rerun()
 else:
-    st.info("لا توجد حجوزات مسجلة حالياً.")
+    st.info("لا توجد حجوزات مسجلة.")
